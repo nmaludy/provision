@@ -6,7 +6,7 @@ require_relative '../lib/task_helper'
 
 def install_ssh_components(platform, version, container)
   case platform
-  when %r{debian}, %r{ubuntu}, %r{cumulus}
+  when 'debian'
     warn '!!! Disabling ESM security updates for ubuntu - no access without privilege !!!'
     run_local_command("docker exec #{container} rm -f /etc/apt/sources.list.d/ubuntu-esm-infra-trusty.list")
     run_local_command("docker exec #{container} apt-get update")
@@ -15,7 +15,7 @@ def install_ssh_components(platform, version, container)
     run_local_command("docker exec #{container} dnf clean all")
     run_local_command("docker exec #{container} dnf install -y sudo openssh-server openssh-clients")
     run_local_command("docker exec #{container} ssh-keygen -A")
-  when %r{centos}, %r{^el-}, %r{eos}, %r{oracle}, %r{redhat}, %r{scientific}
+  when 'redhat'
     if version == '6'
       # sometimes the redhat 6 variant containers like to eat their rpmdb, leading to
       # issues with "rpmdb: unable to join the environment" errors
@@ -31,12 +31,12 @@ def install_ssh_components(platform, version, container)
     ssh_folder = run_local_command("docker exec #{container} ls /etc/ssh/")
     run_local_command("docker exec #{container} ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N \"\"") unless ssh_folder =~ %r{ssh_host_rsa_key}
     run_local_command("docker exec #{container} ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -N \"\"") unless ssh_folder =~ %r{ssh_host_dsa_key}
-  when %r{opensuse}, %r{sles}
+  when 'sles'
     run_local_command("docker exec #{container} zypper -n in openssh")
     run_local_command("docker exec #{container} ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key")
     run_local_command("docker exec #{container} ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key")
     run_local_command("docker exec #{container} sed -ri \"s/^#?UsePAM .*/UsePAM no/\" /etc/ssh/sshd_config")
-  when %r{archlinux}
+  when 'archlinux'
     run_local_command("docker exec #{container} pacman --noconfirm -Sy archlinux-keyring")
     run_local_command("docker exec #{container} pacman --noconfirm -Syu")
     run_local_command("docker exec #{container} pacman -S --noconfirm openssh")
@@ -58,9 +58,9 @@ def fix_ssh(platform, container)
   run_local_command("docker exec #{container} sed -ri \"s/^#?UseDNS .*/UseDNS no/\" /etc/ssh/sshd_config")
   run_local_command("docker exec #{container} sed -e \"/HostKey.*ssh_host_e.*_key/ s/^#*/#/\" -ri /etc/ssh/sshd_config")
   case platform
-  when %r{debian}, %r{ubuntu}
+  when 'debian'
     run_local_command("docker exec #{container} service ssh restart")
-  when %r{centos}, %r{^el-}, %r{eos}, %r{fedora}, %r{oracle}, %r{redhat}, %r{scientific}
+  when 'redhat'
     if container !~ %r{7|8}
       run_local_command("docker exec #{container} service sshd restart")
     else
@@ -71,14 +71,41 @@ def fix_ssh(platform, container)
   end
 end
 
+def match_os_family(str)
+  case str
+  when %r{debian}, %r{ubuntu}, %r{cumulus}
+    'debian'
+  when %r{fedora}
+    'fedora'
+  when %r{centos}, %r{^el-}, %r{eos}, %r{oracle}, %r{redhat}, %r{scientific}
+    'redhat'
+  when %r{opensuse}, %r{sles}
+    'sles'
+  when %r{archlinux}
+    'archlinux'
+  else
+    raise "platform #{platform} not yet supported on docker"
+  end
+end
+
+def determine_platform_version(container, tag)
+  # first try to extract OS family from the container
+  platform = match_os_family(container)
+  # if the container didn't have it, maybe the tag does?
+  platform ||= match_os_family(tag)
+  # no smart way to extract the version right now
+  [platform, tag]
+end
+
 def provision(docker_platform, inventory_location, vars)
   include PuppetLitmus::InventoryManipulation
   inventory_full_path = File.join(inventory_location, 'inventory.yaml')
   inventory_hash = get_inventory_hash(inventory_full_path)
   warn '!!! Using private port forwarding!!!'
-  platform, version = docker_platform.split(':')
+  container, tag = docker_platform.split(':')
+  container = container.sub(%r{/}, '_')
+  platform, version = determine_platform_version(container, tag)
   front_facing_port = 2222
-  platform = platform.sub(%r{/}, '_')
   full_container_name = "#{platform}_#{version}-#{front_facing_port}"
   (front_facing_port..2230).each do |i|
     front_facing_port = i
