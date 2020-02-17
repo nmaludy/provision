@@ -12,11 +12,9 @@ def provision(docker_platform, inventory_location, append_cli, vars)
   inventory_full_path = File.join(inventory_location, 'inventory.yaml')
   inventory_hash = get_inventory_hash(inventory_full_path)
 
-  deb_family_systemd_volume = if (docker_platform =~ %r{debian|ubuntu}) && (docker_platform !~ %r{debian8|ubuntu14})
-                                '--volume /sys/fs/cgroup:/sys/fs/cgroup:ro'
-                              else
-                                ''
-                              end
+  # Nick's modification
+  # don't do any testing here, simply always mount these volumes
+  deb_family_systemd_volume = '--volume /sys/fs/cgroup:/sys/fs/cgroup:ro'
   creation_command = "docker run -d -it #{deb_family_systemd_volume} --privileged #{append_cli} #{docker_platform}"
   container_id = run_local_command(creation_command).strip[0..11]
   fix_missing_tty_error_message(container_id) unless platform_is_windows?(docker_platform)
